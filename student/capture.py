@@ -30,7 +30,7 @@ class DefensiveAgent(pacai.agents.greedy.GreedyFeatureAgent):
         # weights after lots of trial and error
         self.weights['on_home_side'] = 180.0  # stay home!
         self.weights['stopped'] = -200.0  # never stop moving
-        self.weights['reverse'] = -4.0  # dont backtrack (typo but works)
+        self.weights['reverse'] = -4.0  # dont backtrack
         self.weights['num_invaders'] = -2000.0  # invaders bad
         self.weights['distance_to_invader'] = -20.0
         self.weights['invader_near_food'] = -300.0  # protect food at all costs
@@ -154,7 +154,7 @@ def _extract_offensive_features(
     features['on_home_side'] = int(state.is_ghost(agent_index = agent.agent_index))
     features['stopped'] = int(action == pacai.core.action.STOP)
 
-    # dont reverse (forgot apostrophe but whatever)
+    # dont reverse
     agent_actions = state.get_agent_actions(agent.agent_index)
     if len(agent_actions) > 1:
         features['reverse'] = int(action == state.get_reverse_action(agent_actions[-2]))
@@ -205,7 +205,7 @@ def _extract_offensive_features(
             features['ghost_squared'] = 0.0
             features['escape_route'] = 0.0
     else:
-        # no ghosts, were good (typo but leaving it)
+        # no ghosts, were good
         features['ghost_too_close'] = 0.0
         features['ghost_squared'] = 0.0
         features['escape_route'] = 1.0
