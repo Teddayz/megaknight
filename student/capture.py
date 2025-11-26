@@ -27,14 +27,14 @@ class DefensiveAgent(pacai.agents.greedy.GreedyFeatureAgent):
 
         self._distances = pacai.search.distance.DistancePreComputer()
 
-        # weights after lots of trial and error
-        self.weights['on_home_side'] = 180.0  # stay home!
-        self.weights['stopped'] = -200.0  # never stop moving
-        self.weights['reverse'] = -4.0  # dont backtrack
-        self.weights['num_invaders'] = -2000.0  # invaders bad
-        self.weights['distance_to_invader'] = -20.0
-        self.weights['invader_near_food'] = -300.0  # protect food at all costs
-        self.weights['patrol_food'] = 60.0  # hang out near food when safe
+        # weights optimized to beat baseline consistently
+        self.weights['on_home_side'] = 140.0  # stay home!
+        self.weights['stopped'] = -140.0  # never stop moving
+        self.weights['reverse'] = -3.5  # dont backtrack
+        self.weights['num_invaders'] = -2000.0  # invaders very bad
+        self.weights['distance_to_invader'] = -20.0  # chase aggressively
+        self.weights['invader_near_food'] = -500.0  # protect food at all costs
+        self.weights['patrol_food'] = 80.0  # hang out near food when safe
 
         if override_weights:
             for key, weight in override_weights.items():
@@ -53,16 +53,16 @@ class OffensiveAgent(pacai.agents.greedy.GreedyFeatureAgent):
 
         self._distances = pacai.search.distance.DistancePreComputer()
 
-        # offensive weights - tweaked these a lot
-        self.weights['score'] = 200.0  # points good
-        self.weights['distance_to_food'] = -3.0  # closer = better
-        self.weights['ghost_too_close'] = 50.0  # run away!
-        self.weights['ghost_squared'] = 8.0  # exponential fear (squared helps)
-        self.weights['on_home_side'] = -120.0  # get out there
-        self.weights['stopped'] = -120.0
-        self.weights['reverse'] = -3.0
-        self.weights['food_left'] = 15.0  # more food = more urgency
-        self.weights['escape_route'] = 80.0  # always have an exit
+        # offensive weights optimized to beat baseline consistently
+        self.weights['score'] = 120.0  # points good
+        self.weights['distance_to_food'] = -6.0  # closer = better (very aggressive - focus on food)
+        self.weights['ghost_too_close'] = 80.0  # run away! (moderate avoidance - don't over-prioritize)
+        self.weights['ghost_squared'] = 15.0  # exponential fear
+        self.weights['on_home_side'] = -150.0  # get out there (strong)
+        self.weights['stopped'] = -150.0  # never stop
+        self.weights['reverse'] = -4.0  # dont backtrack
+        self.weights['food_left'] = 40.0  # more food = more urgency (higher priority)
+        self.weights['escape_route'] = 100.0  # always have an exit
 
         if override_weights:
             for key, weight in override_weights.items():
@@ -76,67 +76,95 @@ def _extract_defensive_features(
         action: pacai.core.action.Action,
         agent: pacai.core.agent.Agent | None = None,
         **kwargs: typing.Any) -> pacai.core.features.FeatureDict:
+    if agent is None:
+        return pacai.core.features.FeatureDict()
+
     agent = typing.cast(DefensiveAgent, agent)
     state = typing.cast(pacai.capture.gamestate.GameState, state)
 
     features = pacai.core.features.FeatureDict()
 
+    # initialize all features with weights before early return
+    try:
+        features['on_home_side'] = int(state.is_ghost(agent_index = agent.agent_index))
+    except Exception:
+        features['on_home_side'] = 0
+
+    features['stopped'] = int(action == pacai.core.action.STOP)
+    features['reverse'] = 0.0
+    features['num_invaders'] = 0
+    features['distance_to_invader'] = 0.0
+    features['invader_near_food'] = 0.0
+    features['patrol_food'] = 0.0
+
     pos = state.get_agent_position(agent.agent_index)
     if pos is None:
         return features  # dead, wait to respawn
 
-    features['on_home_side'] = int(state.is_ghost(agent_index = agent.agent_index))
-    features['stopped'] = int(action == pacai.core.action.STOP)
-
     # avoid reversing direction
-    agent_actions = state.get_agent_actions(agent.agent_index)
-    if len(agent_actions) > 1:
-        features['reverse'] = int(action == state.get_reverse_action(agent_actions[-2]))
+    try:
+        agent_actions = state.get_agent_actions(agent.agent_index)
+        if agent_actions and len(agent_actions) > 1:
+            features['reverse'] = int(action == state.get_reverse_action(agent_actions[-2]))
+    except Exception:
+        features['reverse'] = 0.0
 
     invaders = state.get_invader_positions(agent_index = agent.agent_index)
     features['num_invaders'] = len(invaders)
 
     if len(invaders) > 0:
         # chase closest invader
-        invader_dists = [agent._distances.get_distance(pos, inv_pos) for inv_pos in invaders.values()]
-        valid_dists = [d for d in invader_dists if d is not None]
-        if valid_dists:
-            features['distance_to_invader'] = min(valid_dists)
-        else:
+        try:
+            invader_dists = [agent._distances.get_distance(pos, inv_pos) for inv_pos in invaders.values()]
+            valid_dists = [d for d in invader_dists if d is not None and d >= 0]
+            if valid_dists:
+                features['distance_to_invader'] = min(valid_dists)
+            else:
+                features['distance_to_invader'] = 0.0
+        except Exception:
             features['distance_to_invader'] = 0.0
 
         # if invader is near food, prioritize that
-        food = state.get_food(agent_index = agent.agent_index)
-        if food:
-            closest_food_to_invader = float('inf')
-            for inv_pos in invaders.values():
-                for food_pos in food:
-                    dist = agent._distances.get_distance(inv_pos, food_pos)
-                    if dist is not None and dist < closest_food_to_invader:
-                        closest_food_to_invader = dist
-            # normalize to 0-1 range
-            if closest_food_to_invader != float('inf'):
-                features['invader_near_food'] = 1.0 / (1.0 + closest_food_to_invader)
+        try:
+            food = state.get_food(agent_index = agent.agent_index)
+            if food:
+                closest_food_to_invader = float('inf')
+                for inv_pos in invaders.values():
+                    for food_pos in food:
+                        dist = agent._distances.get_distance(inv_pos, food_pos)
+                        if dist is not None and dist >= 0 and dist < closest_food_to_invader:
+                            closest_food_to_invader = dist
+                # normalize to 0-1 range
+                if closest_food_to_invader != float('inf') and closest_food_to_invader >= 0:
+                    features['invader_near_food'] = 1.0 / (1.0 + closest_food_to_invader)
+                else:
+                    features['invader_near_food'] = 0.0
             else:
                 features['invader_near_food'] = 0.0
-        else:
+        except Exception:
             features['invader_near_food'] = 0.0
         features['patrol_food'] = 0.0
     else:
         # no invaders, patrol near food
         features['distance_to_invader'] = 0.0
         features['invader_near_food'] = 0.0
-        
-        food = state.get_food(agent_index = agent.agent_index)
-        if food:
-            food_dists = [agent._distances.get_distance(pos, f_pos) for f_pos in food]
-            valid_dists = [d for d in food_dists if d is not None]
-            if valid_dists:
-                min_food_dist = min(valid_dists)
-                features['patrol_food'] = 1.0 / (1.0 + min_food_dist)
+
+        try:
+            food = state.get_food(agent_index = agent.agent_index)
+            if food:
+                food_dists = [agent._distances.get_distance(pos, f_pos) for f_pos in food]
+                valid_dists = [d for d in food_dists if d is not None and d >= 0]
+                if valid_dists:
+                    min_food_dist = min(valid_dists)
+                    if min_food_dist >= 0:
+                        features['patrol_food'] = 1.0 / (1.0 + min_food_dist)
+                    else:
+                        features['patrol_food'] = 0.0
+                else:
+                    features['patrol_food'] = 0.0
             else:
                 features['patrol_food'] = 0.0
-        else:
+        except Exception:
             features['patrol_food'] = 0.0
 
     return features
@@ -146,66 +174,102 @@ def _extract_offensive_features(
         action: pacai.core.action.Action,
         agent: pacai.core.agent.Agent | None = None,
         **kwargs: typing.Any) -> pacai.core.features.FeatureDict:
+    if agent is None:
+        return pacai.core.features.FeatureDict()
+
     agent = typing.cast(OffensiveAgent, agent)
     state = typing.cast(pacai.capture.gamestate.GameState, state)
 
     features = pacai.core.features.FeatureDict()
-    features['score'] = state.get_normalized_score(agent.agent_index)
-    features['on_home_side'] = int(state.is_ghost(agent_index = agent.agent_index))
+
+    try:
+        features['score'] = state.get_normalized_score(agent.agent_index)
+    except Exception:
+        features['score'] = 0.0
+
+    try:
+        features['on_home_side'] = int(state.is_ghost(agent_index = agent.agent_index))
+    except Exception:
+        features['on_home_side'] = 0
+
     features['stopped'] = int(action == pacai.core.action.STOP)
 
     # dont reverse
-    agent_actions = state.get_agent_actions(agent.agent_index)
-    if len(agent_actions) > 1:
-        features['reverse'] = int(action == state.get_reverse_action(agent_actions[-2]))
+    features['reverse'] = 0.0
+    try:
+        agent_actions = state.get_agent_actions(agent.agent_index)
+        if agent_actions and len(agent_actions) > 1:
+            features['reverse'] = int(action == state.get_reverse_action(agent_actions[-2]))
+    except Exception:
+        features['reverse'] = 0.0
+
+    # initialize all features with weights before early return
+    features['food_left'] = 0
+    features['distance_to_food'] = 0.0
+    features['ghost_too_close'] = 0.0
+    features['ghost_squared'] = 0.0
+    features['escape_route'] = 1.0
 
     pos = state.get_agent_position(agent.agent_index)
     if pos is None:
         return features  # dead
 
     # food stuff
-    food = state.get_food(agent_index = agent.agent_index)
-    features['food_left'] = len(food)
-    
-    if food:
-        food_dists = [agent._distances.get_distance(pos, f_pos) for f_pos in food]
-        valid_dists = [d for d in food_dists if d is not None]
-        if valid_dists:
-            features['distance_to_food'] = min(valid_dists)
+    try:
+        food = state.get_food(agent_index = agent.agent_index)
+        if food is not None:
+            features['food_left'] = len(food)
         else:
-            features['distance_to_food'] = 0.0
-    else:
-        features['distance_to_food'] = -100000  # win condition
+            features['food_left'] = 0
 
-    # ghost avoidance - this is important
-    ghosts = state.get_nonscared_opponent_positions(agent_index = agent.agent_index)
-    if ghosts:
-        ghost_dists = [agent._distances.get_distance(pos, g_pos) for g_pos in ghosts.values()]
-        valid_dists = [d for d in ghost_dists if d is not None]
-        
-        if valid_dists:
-            min_ghost = min(valid_dists)
-            
-            if min_ghost > GHOST_SAFE_DISTANCE:
-                # ghost far away, ignore
+        if food:
+            food_dists = [agent._distances.get_distance(pos, f_pos) for f_pos in food]
+            valid_dists = [d for d in food_dists if d is not None and d >= 0]
+            if valid_dists:
+                features['distance_to_food'] = min(valid_dists)
+            else:
+                features['distance_to_food'] = 0.0
+        else:
+            features['distance_to_food'] = -100000  # win condition
+    except Exception:
+        features['food_left'] = 0
+        features['distance_to_food'] = 0.0
+
+    # ghost avoidance - match baseline approach
+    try:
+        ghosts = state.get_nonscared_opponent_positions(agent_index = agent.agent_index)
+        if ghosts:
+            ghost_dists = [agent._distances.get_distance(pos, g_pos) for g_pos in ghosts.values()]
+            valid_dists = [d for d in ghost_dists if d is not None and d >= 0]
+
+            if valid_dists:
+                min_ghost = min(valid_dists)
+
+                # baseline ignores ghosts beyond 2.5, we'll use similar logic
+                if min_ghost > GHOST_SAFE_DISTANCE:
+                    # ghost far away, ignore (set to 0 so weight doesn't matter)
+                    features['ghost_too_close'] = 0.0
+                    features['ghost_squared'] = 0.0
+                else:
+                    # ghost close, panic!
+                    features['ghost_too_close'] = min_ghost
+                    features['ghost_squared'] = min_ghost ** 2
+
+                # escape route - prefer moves that keep distance
+                if min_ghost < 3.0 and min_ghost > 0:
+                    features['escape_route'] = min_ghost / 3.0  # closer = worse
+                else:
+                    features['escape_route'] = 1.0
+            else:
                 features['ghost_too_close'] = 0.0
                 features['ghost_squared'] = 0.0
-            else:
-                # ghost close, panic!
-                features['ghost_too_close'] = min_ghost
-                features['ghost_squared'] = min_ghost ** 2
-            
-            # escape route - prefer moves that keep distance
-            if min_ghost < 3.0:
-                features['escape_route'] = min_ghost / 3.0  # closer = worse
-            else:
-                features['escape_route'] = 1.0
+                features['escape_route'] = 0.0
         else:
+            # no ghosts, were good
             features['ghost_too_close'] = 0.0
             features['ghost_squared'] = 0.0
-            features['escape_route'] = 0.0
-    else:
-        # no ghosts, were good
+            features['escape_route'] = 1.0
+    except Exception:
         features['ghost_too_close'] = 0.0
         features['ghost_squared'] = 0.0
         features['escape_route'] = 1.0
