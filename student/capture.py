@@ -28,13 +28,16 @@ class DefensiveAgent(pacai.agents.greedy.GreedyFeatureAgent):
         self._distances = pacai.search.distance.DistancePreComputer()
 
         # weights optimized to beat baseline consistently
-        self.weights['on_home_side'] = 140.0  # stay home!
-        self.weights['stopped'] = -140.0  # never stop moving
-        self.weights['reverse'] = -3.5  # dont backtrack
-        self.weights['num_invaders'] = -2000.0  # invaders very bad
-        self.weights['distance_to_invader'] = -20.0  # chase aggressively
-        self.weights['invader_near_food'] = -500.0  # protect food at all costs
-        self.weights['patrol_food'] = 80.0  # hang out near food when safe
+        self.weights['on_home_side'] = 150.0     # prefer staying home when appropriate
+        self.weights['stopped'] = -140.0        # stronger penalty for stopping
+        self.weights['reverse'] = -5.0          # avoid backtracking more
+        self.weights['num_invaders'] = -3000.0  # very bad to have invaders
+        # distance_to_invader is raw distance (smaller is better), negative to prefer closer
+        self.weights['distance_to_invader'] = -40.0
+        # if invader is near food, strongly protect it
+        self.weights['invader_near_food'] = -700.0
+        # patrol_food reward when no invaders
+        self.weights['patrol_food'] = 110.0
 
         if override_weights:
             for key, weight in override_weights.items():
@@ -54,15 +57,19 @@ class OffensiveAgent(pacai.agents.greedy.GreedyFeatureAgent):
         self._distances = pacai.search.distance.DistancePreComputer()
 
         # offensive weights optimized to beat baseline consistently
-        self.weights['score'] = 120.0  # points good
-        self.weights['distance_to_food'] = -6.0  # closer = better (very aggressive - focus on food)
-        self.weights['ghost_too_close'] = 80.0  # run away! (moderate avoidance - don't over-prioritize)
-        self.weights['ghost_squared'] = 15.0  # exponential fear
-        self.weights['on_home_side'] = -150.0  # get out there (strong)
-        self.weights['stopped'] = -150.0  # never stop
-        self.weights['reverse'] = -4.0  # dont backtrack
-        self.weights['food_left'] = 40.0  # more food = more urgency (higher priority)
-        self.weights['escape_route'] = 100.0  # always have an exit
+        self.weights['score'] = 120.0
+        # stronger desire to get close to food (raw distance: smaller -> better)
+        self.weights['distance_to_food'] = -18.0
+        # reduce ghost aversion slightly so agent takes safer risks to get food
+        self.weights['ghost_too_close'] = 48.0
+        self.weights['ghost_squared'] = 4.5
+        self.weights['on_home_side'] = -150.0
+        self.weights['stopped'] = -140.0
+        self.weights['reverse'] = -5.0
+        # value left food more to finish maps faster
+        self.weights['food_left'] = 60.0
+        # prefer moves that preserve escape options
+        self.weights['escape_route'] = 220.0 # always have an exit
 
         if override_weights:
             for key, weight in override_weights.items():
